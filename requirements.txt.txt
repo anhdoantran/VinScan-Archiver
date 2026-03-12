@@ -1,5 +1,0 @@
-gradio
-easyocr
-opencv-python-headless
-google-generativeai
-numpy
