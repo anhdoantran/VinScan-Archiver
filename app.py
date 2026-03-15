@@ -6,11 +6,14 @@ import google.generativeai as genai
 import re
 import os
 import difflib
+import csv
+from datetime import datetime
 
 # ==========================================
 # 1. CẤU HÌNH HỆ THỐNG
 # ==========================================
-api_key = os.environ.get("GEMINI_API_KEY")
+# Hệ thống ưu tiên tìm chìa khóa trên Web trước. Nếu không có (chạy ở Local), nó tự động dùng chìa khóa dự phòng!
+api_key = os.environ.get("GEMINI_API_KEY") or "AIzaSyCKo2G1gJ8gFvKmrxopXbpDqnLyOsD_MZI"
 genai.configure(api_key=api_key)
 model_ai = genai.GenerativeModel('gemini-2.5-flash')
 reader = easyocr.Reader(['vi', 'en', 'fr'], gpu=False)
@@ -23,6 +26,19 @@ def kiem_tra_rac(text):
     special_chars = len(re.findall(r'[^a-zA-Z0-9à-ỹÀ-Ỹ\s\-\—\.\,\?\!]', text))
     return (special_chars / len(text)) > 0.4 if len(text) > 0 else True
 
+def kiem_tra_chat_luong_anh(anh_numpy):
+    """Sử dụng thuật toán Laplacian để đo độ mờ của ảnh"""
+    gray = cv2.cvtColor(anh_numpy, cv2.COLOR_RGB2GRAY)
+    # Tính toán phương sai của đạo hàm bậc 2 (Laplacian)
+    do_sac_net = cv2.Laplacian(gray, cv2.CV_64F).var()
+    
+    # Ngưỡng chuẩn: Dưới 100 là ảnh quá mờ
+    nguong_chuan = 100.0 
+    
+    if do_sac_net < nguong_chuan:
+        return False, f"⚠️ CẢNH BÁO: Ảnh quá mờ (Độ sắc nét: {do_sac_net:.1f} < {nguong_chuan}). Vui lòng chụp/quét lại ảnh rõ hơn để đảm bảo AI hoạt động chính xác!"
+    return True, f"✅ Ảnh đạt chuẩn (Độ sắc nét: {do_sac_net:.1f})"
+
 def theo_doi_su_thay_doi(raw_text, ai_text):
     """Thuật toán đối chiếu và bôi màu sự thay đổi của văn bản (Text Diff)"""
     if not raw_text or not ai_text: return ""
@@ -31,7 +47,7 @@ def theo_doi_su_thay_doi(raw_text, ai_text):
     words_ai = ai_text.split()
     diff = difflib.ndiff(words_raw, words_ai)
     
-    html_output = "<div style='font-family: Arial; line-height: 1.6; padding: 15px; background-color: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;'>"
+    html_output = "<div style='font-family: Arial; line-height: 1.6; padding: 15px; background-color: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; word-wrap: break-word; overflow-wrap: break-word;'>"
     for word in diff:
         if word.startswith('- '):
             html_output += f"<span style='color: #ef4444; text-decoration: line-through; margin-right: 4px;'>{word[2:]}</span>"
@@ -46,11 +62,21 @@ def theo_doi_su_thay_doi(raw_text, ai_text):
 def xu_ly_anh_va_ocr(anh):
     """Hàm xử lý ảnh qua bộ lọc OpenCV và đọc chữ OCR"""
     if anh is None: return None, "⚠️ Vui lòng tải ảnh lên!"
+    
+    # BƯỚC MỚI: KIỂM TRA CHẤT LƯỢNG ẢNH ĐẦU VÀO
+    hop_le, thong_bao = kiem_tra_chat_luong_anh(anh)
+    if not hop_le:
+        # Trả về lỗi luôn, không tốn tài nguyên chạy OCR nữa
+        return anh, thong_bao 
+
     gray = cv2.cvtColor(anh, cv2.COLOR_RGB2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8,8))
     enhanced = clahe.apply(gray)
     result = reader.readtext(enhanced, detail=0, paragraph=True, width_ths=0.7, y_ths=0.3)
-    return enhanced, "\n\n".join(result)
+    
+    # Gắn thêm thông báo ảnh đạt chuẩn lên đầu đoạn chữ
+    van_ban_cuoi = thong_bao + "\n\n" + "\n\n".join(result)
+    return enhanced, van_ban_cuoi
 
 def hieu_dinh_ai(raw_text):
     """Hàm gọi AI phục chế văn bản"""
@@ -72,22 +98,32 @@ def xu_ly_ai_va_so_sanh(raw):
     diff_html = theo_doi_su_thay_doi(raw, ai_fixed)
     return ai_fixed, diff_html
 
-def thuc_hien_luu(van_ban, ten_file, so_trang):
-    """Hàm lưu trữ file text cộng dồn vào ổ đĩa"""
+def thuc_hien_luu(van_ban, raw_text_hien_tai, ten_file, so_trang):
+    """Hàm lưu trữ file text cộng dồn và TỰ ĐỘNG THU THẬP DATASET"""
     if not van_ban: return "⚠️ Không có dữ liệu để lưu!", so_trang, None
     
+    # 1. LOGIC LƯU SÁCH VÀO Ổ ĐĨA (Giữ nguyên)
     folder_path = "Kho_Du_Lieu"
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-        
     file_name = (ten_file.strip().replace(" ", "_") if ten_file else "VinScan_Output") + ".txt"
     file_path = os.path.join(folder_path, file_name)
-    
     with open(file_path, "a", encoding="utf-8") as f:
         f.write(f"\n\n{'='*15} TRANG {int(so_trang)} {'='*15}\n\n")
         f.write(van_ban)
+        
+    # 2. ĐỘT PHÁ MỚI: LOGIC TỰ ĐỘNG THU THẬP DỮ LIỆU HUẤN LUYỆN (DATASET)
+    dataset_file = "Dataset_Huan_Luyen_OCR.csv"
+    file_exists = os.path.isfile(dataset_file)
+    with open(dataset_file, mode='a', newline='', encoding='utf-8') as csv_file:
+        writer = csv.writer(csv_file)
+        # Nếu file chưa có, tạo dòng tiêu đề (Header)
+        if not file_exists:
+            writer.writerow(["Thoi_Gian", "Ten_Sach", "Loi_OCR_Goc_X", "Van_Ban_Chuan_Y"])
+        # Ghi nhận cặp dữ liệu
+        writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ten_file, raw_text_hien_tai, van_ban])
     
-    return f"✅ Đã lưu tiếp Trang {int(so_trang)} vào {file_name}", so_trang + 1, file_path
+    return f"✅ Đã lưu Trang {int(so_trang)} và trích xuất thành công 1 cặp Dataset!", so_trang + 1, file_path
 
 def lam_moi_trang():
     """Hàm Reset trả 9 giá trị rỗng cho 9 ô trên giao diện"""
@@ -165,8 +201,12 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="indigo")) as vinscan:
     # ==========================================
     btn_ocr.click(fn=xu_ly_anh_va_ocr, inputs=input_img, outputs=[output_enhanced, output_raw])
     btn_ai.click(fn=xu_ly_ai_va_so_sanh, inputs=output_raw, outputs=[output_ai, output_diff])
-    btn_save.click(fn=thuc_hien_luu, inputs=[output_ai, file_name_in, page_num_in], outputs=[status_msg, page_num_in, file_download])
-    
+    btn_save.click(
+        fn=thuc_hien_luu, 
+        inputs=[output_ai, output_raw, file_name_in, page_num_in], # Thêm output_raw vào đây
+        outputs=[status_msg, page_num_in, file_download]
+    )
+
     btn_reset.click(
         fn=lam_moi_trang, 
         inputs=[], 
