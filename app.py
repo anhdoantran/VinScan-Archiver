@@ -15,7 +15,7 @@ model_ai = genai.GenerativeModel('gemini-2.5-flash')
 reader = easyocr.Reader(['vi', 'en', 'fr'], gpu=False)
 
 # ==========================================
-# 2. CÁC HÀM XỬ LÝ
+# 2. CÁC HÀM XỬ LÝ LOGIC
 # ==========================================
 def kiem_tra_rac(text):
     if not text.strip(): return True
@@ -43,19 +43,31 @@ def hieu_dinh_ai(raw_text):
     except Exception as e:
         return f"Lỗi AI: {str(e)}"
 
-def thuc_hien_luu(van_ban, ten_file, che_do, so_trang):
+def thuc_hien_luu(van_ban, ten_file, so_trang):
     if not van_ban: return "⚠️ Không có dữ liệu để lưu!", so_trang, None
-    file_name = (ten_file.strip().replace(" ", "_") if ten_file else "VinScan_Output") + ".txt"
-    mode = "a" if che_do == "Lưu nối tiếp vào cuối file" else "w"
     
-    with open(file_name, mode, encoding="utf-8") as f:
+    # Tự động tạo thư mục "Kho_Du_Lieu" để chứa sách nếu chưa có
+    folder_path = "Kho_Du_Lieu"
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        
+    file_name = (ten_file.strip().replace(" ", "_") if ten_file else "VinScan_Output") + ".txt"
+    file_path = os.path.join(folder_path, file_name)
+    
+    # LUÔN DÙNG CHẾ ĐỘ "a" (Viết nối tiếp vào cuối file)
+    with open(file_path, "a", encoding="utf-8") as f:
         f.write(f"\n\n{'='*15} TRANG {int(so_trang)} {'='*15}\n\n")
         f.write(van_ban)
     
-    return f"✅ Đã lưu Trang {int(so_trang)} vào {file_name}", so_trang + 1, file_name
+    return f"✅ Đã lưu tiếp Trang {int(so_trang)} vào {file_name}", so_trang + 1, file_path
+
+# HÀM MỚI: Reset toàn bộ giao diện
+def lam_moi_trang():
+    # Lần lượt trả về: Ảnh gốc, Ảnh lọc, OCR thô, AI, Tên sách, Trang, File tải, Trạng thái
+    return None, None, "", "", "", 1, None, "🔄 Đã làm mới toàn bộ không gian làm việc!"
 
 # ==========================================
-# 3. THIẾT KẾ GIAO DIỆN (ĐÃ XẾP LẠI BỐ CỤC)
+# 3. THIẾT KẾ GIAO DIỆN (UI/UX)
 # ==========================================
 with gr.Blocks(theme=gr.themes.Soft(primary_hue="indigo")) as vinscan:
     
@@ -77,7 +89,12 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="indigo")) as vinscan:
             # CỘT TRÁI: TẢI ẢNH
             with gr.Column(scale=1):
                 input_img = gr.Image(label="1. Tải ảnh trang sách", type="numpy")
-                btn_ocr = gr.Button("🔍 PHÂN TÍCH & QUÉT CHỮ", variant="primary")
+                
+                with gr.Row():
+                    btn_ocr = gr.Button("🔍 QUÉT CHỮ", variant="primary")
+                    # NÚT RESET ĐƯỢC THÊM VÀO ĐÂY
+                    btn_reset = gr.Button("🔄 LÀM MỚI (RESET)", variant="stop")
+                    
                 with gr.Accordion("Xem ảnh qua bộ lọc (OpenCV)", open=False):
                     output_enhanced = gr.Image(label="Ảnh đã làm rõ nét")
 
@@ -85,30 +102,21 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="indigo")) as vinscan:
             with gr.Column(scale=1):
                 with gr.Tabs():
                     
-                    # TAB 1: BẢN QUÉT THÔ LÊN TRƯỚC
+                    # TAB 1: BẢN QUÉT THÔ
                     with gr.TabItem("🔍 2. Bản quét thô (OCR)"):
                         output_raw = gr.Textbox(label="Dữ liệu gốc từ máy quét", lines=18)
 
-                    # TAB 2: AI & LƯU TRỮ RA SAU
+                    # TAB 2: AI & LƯU TRỮ
                     with gr.TabItem("✨ 3. Tu chỉnh AI & Lưu trữ"):
-                        # NÚT AI ĐƯỢC ĐƯA LÊN TRÊN CÙNG CỦA TAB NÀY
                         btn_ai = gr.Button("✨ BẤM VÀO ĐÂY ĐỂ AI SỬA LỖI TỪ BẢN QUÉT THÔ", variant="primary")
-                        
                         output_ai = gr.Textbox(label="Kết quả AI (Có thể chỉnh sửa tay)", lines=12, interactive=True)
                         
                         with gr.Group():
                             with gr.Row():
-                                # Sửa lại nhãn hướng dẫn cho rõ ràng
-                                file_name_in = gr.Textbox(label="Tên cuốn sách (Nhập lại tên sách cũ để lưu tiếp)", placeholder="Ví dụ: Sach_So_2", scale=2)
+                                file_name_in = gr.Textbox(label="Tên cuốn sách (Tự động nối trang nếu trùng tên)", placeholder="Ví dụ: Nam_Phong", scale=2)
                                 page_num_in = gr.Number(label="Số trang đang lưu", value=1, scale=1)
                             
-                            # Sửa lại câu chữ của 2 nút Radio cho người dùng hiểu rõ bản chất
-                            save_mode = gr.Radio(
-                                ["Lưu nối tiếp vào cuối file", "Xóa trắng file cũ và Lưu đè"], 
-                                label="Chế độ lưu (Quan trọng)", 
-                                value="Lưu nối tiếp vào cuối file"
-                            )
-                            btn_save = gr.Button("💾 THỰC HIỆN LƯU & XUẤT FILE", variant="secondary")
+                            btn_save = gr.Button("💾 LƯU CỘNG DỒN & XUẤT FILE", variant="secondary")
                         
                         file_download = gr.File(label="📥 Tải file .txt về máy")
                         status_msg = gr.Textbox(label="Trạng thái", lines=1, interactive=False)
@@ -129,6 +137,13 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="indigo")) as vinscan:
     # SỰ KIỆN XỬ LÝ
     btn_ocr.click(fn=xu_ly_anh_va_ocr, inputs=input_img, outputs=[output_enhanced, output_raw])
     btn_ai.click(fn=hieu_dinh_ai, inputs=output_raw, outputs=output_ai)
-    btn_save.click(fn=thuc_hien_luu, inputs=[output_ai, file_name_in, save_mode, page_num_in], outputs=[status_msg, page_num_in, file_download])
+    btn_save.click(fn=thuc_hien_luu, inputs=[output_ai, file_name_in, page_num_in], outputs=[status_msg, page_num_in, file_download])
+    
+    # SỰ KIỆN NÚT RESET MỚI
+    btn_reset.click(
+        fn=lam_moi_trang, 
+        inputs=[], 
+        outputs=[input_img, output_enhanced, output_raw, output_ai, file_name_in, page_num_in, file_download, status_msg]
+    )
 
 vinscan.launch()
