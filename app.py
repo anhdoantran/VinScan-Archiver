@@ -46,7 +46,7 @@ def hieu_dinh_ai(raw_text):
 def thuc_hien_luu(van_ban, ten_file, che_do, so_trang):
     if not van_ban: return "⚠️ Không có dữ liệu để lưu!", so_trang, None
     file_name = (ten_file.strip().replace(" ", "_") if ten_file else "VinScan_Output") + ".txt"
-    mode = "a" if che_do == "Lưu nối tiếp" else "w"
+    mode = "a" if che_do == "Lưu nối tiếp vào cuối file" else "w"
     
     with open(file_name, mode, encoding="utf-8") as f:
         f.write(f"\n\n{'='*15} TRANG {int(so_trang)} {'='*15}\n\n")
@@ -98,11 +98,16 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="indigo")) as vinscan:
                         
                         with gr.Group():
                             with gr.Row():
-                                file_name_in = gr.Textbox(label="Tên cuốn sách", placeholder="Nam_Phong", scale=2)
-                                page_num_in = gr.Number(label="Số trang", value=1, scale=1)
-                            save_mode = gr.Radio(["Lưu nối tiếp", "Tạo file mới"], label="Chế độ", value="Lưu nối tiếp")
+                                # Sửa lại nhãn hướng dẫn cho rõ ràng
+                                file_name_in = gr.Textbox(label="Tên cuốn sách (Nhập lại tên sách cũ để lưu tiếp)", placeholder="Ví dụ: Sach_So_2", scale=2)
+                                page_num_in = gr.Number(label="Số trang đang lưu", value=1, scale=1)
                             
-                            # NÚT LƯU ĐƯỢC ĐƯA XUỐNG DƯỚI CÙNG
+                            # Sửa lại câu chữ của 2 nút Radio cho người dùng hiểu rõ bản chất
+                            save_mode = gr.Radio(
+                                ["Lưu nối tiếp vào cuối file", "Xóa trắng file cũ và Lưu đè"], 
+                                label="Chế độ lưu (Quan trọng)", 
+                                value="Lưu nối tiếp vào cuối file"
+                            )
                             btn_save = gr.Button("💾 THỰC HIỆN LƯU & XUẤT FILE", variant="secondary")
                         
                         file_download = gr.File(label="📥 Tải file .txt về máy")
